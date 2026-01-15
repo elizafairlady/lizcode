@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from lizcode.core.state import Mode
 from lizcode.tools.base import Permission, Tool, ToolResult
 
 if TYPE_CHECKING:
@@ -36,10 +37,15 @@ Task states:
 IMPORTANT: Mark tasks completed IMMEDIATELY after finishing. Do not batch completions.
 Only ONE task can be in_progress at any time."""
 
-    permission = Permission.READ  # Does not modify files, just internal state
+    permission = Permission.READ  # Available in both modes, but restricted in Plan mode
 
     def __init__(self, task_list: TaskList | None = None):
         self._task_list = task_list
+        self._mode: Mode | None = None  # Set by agent
+
+    def set_mode(self, mode: Mode) -> None:
+        """Set current mode for action validation."""
+        self._mode = mode
 
     def set_task_list(self, task_list: TaskList) -> None:
         """Set the task list to manage."""
@@ -94,6 +100,14 @@ Only ONE task can be in_progress at any time."""
                 success=False,
                 output="",
                 error="Task list not initialized",
+            )
+
+        # In Plan mode, only "list" action is allowed
+        if self._mode == Mode.PLAN and action != "list":
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"Action '{action}' not allowed in Plan mode. Only 'list' is available. Switch to Act mode to manage tasks.",
             )
 
         try:

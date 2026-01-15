@@ -25,7 +25,7 @@ This tool:
 
 ALWAYS call this when done with a task. Don't leave the user hanging."""
 
-    permission = Permission.READ  # No approval needed - just signals completion
+    permission = Permission.WRITE  # ACT mode only - signals completion
 
     @property
     def parameters(self) -> dict[str, Any]:

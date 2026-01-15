@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from lizcode.core.state import Mode
 from lizcode.tools.base import Permission, Tool, ToolResult
 
 
@@ -24,7 +25,14 @@ Actions:
 Cell numbers are 0-indexed.
 Cell types: "code" or "markdown"."""
 
-    permission = Permission.WRITE
+    permission = Permission.READ  # Available in both modes, but restricted in Plan mode
+
+    def __init__(self):
+        self._mode: Mode | None = None
+
+    def set_mode(self, mode: Mode) -> None:
+        """Set current mode for action validation."""
+        self._mode = mode
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -67,6 +75,14 @@ Cell types: "code" or "markdown"."""
         **kwargs: Any,
     ) -> ToolResult:
         """Execute notebook operation."""
+        # In Plan mode, only "read" action is allowed
+        if self._mode == Mode.PLAN and action != "read":
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"Action '{action}' not allowed in Plan mode. Only 'read' is available. Switch to Act mode to edit notebooks.",
+            )
+
         path = Path(notebook_path).expanduser().resolve()
 
         if not path.suffix == ".ipynb":

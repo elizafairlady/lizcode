@@ -134,11 +134,8 @@ class ToolRegistry:
             
             # State-based filtering for plan tools in plan mode
             if mode == Mode.PLAN:
-                if tool.name == "create_plan":
-                    # Only offer create_plan if no plan exists
-                    if has_plan:
-                        continue
-                elif tool.name in ("update_plan", "finalize_plan", "todo_write"):
+                # create_plan is always available - user may want to restart
+                if tool.name in ("update_plan", "finalize_plan"):
                     # Only offer these if a plan exists
                     if not has_plan:
                         continue

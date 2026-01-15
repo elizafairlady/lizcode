@@ -275,6 +275,10 @@ class Agent:
                     success=False,
                 )
 
+        # Update mode-aware tools with current mode
+        if hasattr(tool, 'set_mode'):
+            tool.set_mode(self.state.mode)
+
         # Execute the tool
         try:
             tool_result = await tool.execute(**tool_call.arguments)
