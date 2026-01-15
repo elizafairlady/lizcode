@@ -28,12 +28,14 @@ class Agent:
         state: ConversationState | None = None,
         tool_registry: ToolRegistry | None = None,
         approval_callback: Callable[[str, str, dict], bool] | None = None,
+        question_callback: Callable[[str, list | None, str | None], str] | None = None,
         working_directory: Path | None = None,
     ):
         self.provider = provider
         self.state = state or ConversationState()
         self.working_directory = working_directory or Path.cwd()
         self.approval_callback = approval_callback or self._default_approval
+        self.question_callback = question_callback
 
         # Initialize task list and plan
         lizcode_dir = self.working_directory / ".lizcode"
@@ -77,7 +79,7 @@ class Agent:
         # Import here to avoid circular imports
         from lizcode.tools import create_tool_registry
         from lizcode.tools.todo_write import TodoWriteTool
-        from lizcode.tools.task import TaskTool
+        from lizcode.tools.task import TaskTool, AskUserQuestionTool
         from lizcode.tools.mode import CreatePlanTool, FinalizePlanTool, UpdatePlanTool
         
         registry = create_tool_registry()
@@ -88,6 +90,9 @@ class Agent:
                 tool.set_task_list(self.task_list)
             elif isinstance(tool, TaskTool):
                 tool.set_manager(self.subagent_manager)
+            elif isinstance(tool, AskUserQuestionTool):
+                if self.question_callback:
+                    tool.set_callback(self.question_callback)
             elif isinstance(tool, (CreatePlanTool, FinalizePlanTool, UpdatePlanTool)):
                 tool.set_state(self)
                 if isinstance(tool, CreatePlanTool):
@@ -158,10 +163,21 @@ class Agent:
 
         # Process in a loop to handle tool calls
         iterations = 0
-        max_iterations = 20  # Prevent infinite loops
+        # Plan mode: unlimited iterations (exploration is unbounded)
+        # Act mode: limit iterations but prompt user to continue
+        max_iterations = None if self.state.mode == Mode.PLAN else 25
+        iteration_warning_at = 20  # Warn at this point in act mode
 
-        while iterations < max_iterations:
+        while max_iterations is None or iterations < max_iterations:
             iterations += 1
+            
+            # In act mode, check if we should prompt user to continue
+            if self.state.mode == Mode.ACT and iterations == iteration_warning_at:
+                yield {
+                    "type": "iteration_limit", 
+                    "count": iterations,
+                    "message": f"Reached {iterations} iterations. Continue execution?"
+                }
 
             messages = self._build_messages()
             tools = self.get_available_tools()

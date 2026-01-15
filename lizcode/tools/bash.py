@@ -18,10 +18,18 @@ class BashTool(Tool):
 Use this for terminal operations like git, npm, docker, running tests, etc.
 DO NOT use this for file operations (reading, writing, editing) - use the specialized tools instead.
 
-Important:
+## GUI Apps & Long-Running Processes
+Use background=true for:
+- GUI applications (pygame, tkinter, Qt, GTK, electron)
+- Dev servers (npm start, python -m http.server)
+- Any process that runs indefinitely
+
+Example: bash(command="python game.py", background=true)
+
+## Important
 - Always quote file paths containing spaces with double quotes
 - Use absolute paths when possible
-- Commands will timeout after the specified duration
+- Commands will timeout after 120 seconds unless background=true
 - Output is truncated if too long"""
 
     permission = Permission.EXECUTE
@@ -47,6 +55,10 @@ Important:
                     "type": "string",
                     "description": "Working directory for command execution (default: current directory)",
                 },
+                "background": {
+                    "type": "boolean",
+                    "description": "Run process in background and return immediately. Use for GUI apps or long-running processes.",
+                },
             },
             "required": ["command"],
         }
@@ -56,19 +68,43 @@ Important:
         command: str,
         timeout: int | None = None,
         working_directory: str | None = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> ToolResult:
         """Execute a bash command."""
         timeout = min(timeout or self.timeout, 300)
         cwd = working_directory or os.getcwd()
+        
+        # Forward full environment including DISPLAY for GUI apps
+        env = {**os.environ}
+        # Only set TERM to dumb for non-background processes
+        if not background:
+            env["TERM"] = "dumb"
 
         try:
+            # Background mode: launch and return immediately
+            if background:
+                process = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    cwd=cwd,
+                    env=env,
+                    start_new_session=True,  # Detach from parent
+                )
+                return ToolResult(
+                    success=True,
+                    output=f"Background process started (PID: {process.pid})\nCommand: {command}\n\nProcess is running independently. Check manually or use `ps aux | grep {process.pid}` to verify.",
+                )
+
+            # Normal mode: wait for completion
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                env={**os.environ, "TERM": "dumb"},
+                env=env,
             )
 
             try:
@@ -82,7 +118,7 @@ Important:
                 return ToolResult(
                     success=False,
                     output="",
-                    error=f"Command timed out after {timeout} seconds",
+                    error=f"Command timed out after {timeout} seconds. For long-running or GUI processes, use background=true.",
                 )
 
             stdout_str = stdout.decode("utf-8", errors="replace")

@@ -324,7 +324,13 @@ class Plan:
         return plan
 
     def to_tasks(self) -> list[dict[str, str]]:
-        """Convert plan steps to task list format."""
+        """Convert plan steps to task list format.
+        
+        Note: Verification steps are NOT included as tasks.
+        They remain in plan.md for human reference but are not
+        actionable by the model (e.g., "run app and verify gliders work"
+        requires human judgment).
+        """
         tasks = []
         for step in self.steps:
             # Create imperative and active forms
@@ -356,12 +362,7 @@ class Plan:
                 },
             })
 
-        # Add verification tasks
-        for v in self.verification_steps:
-            tasks.append({
-                "content": v,
-                "active_form": f"Verifying: {v}",
-                "metadata": {"type": "verification"},
-            })
+        # Verification steps are NOT added as tasks
+        # They stay in plan.md for human reference only
 
         return tasks

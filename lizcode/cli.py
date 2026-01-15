@@ -34,6 +34,44 @@ class ToolDeclinedException(Exception):
     pass
 
 
+async def ask_user_callback(question: str, options: list[str] | None, context: str | None) -> str:
+    """Callback for asking user a question interactively.
+    
+    This is called by the ask_user tool to get input from the user.
+    """
+    console.print()
+    
+    # Show context if provided
+    if context:
+        console.print(f"[dim]{context}[/dim]")
+        console.print()
+    
+    # Show question
+    console.print(Panel(
+        question,
+        title="[cyan]Question[/cyan]",
+        border_style="cyan",
+    ))
+    
+    # Show options if provided
+    if options:
+        console.print("[dim]Options:[/dim]")
+        for i, opt in enumerate(options, 1):
+            console.print(f"  [cyan]{i}.[/cyan] {opt}")
+        console.print()
+    
+    # Prompt for answer
+    try:
+        from prompt_toolkit import prompt as pt_prompt
+        answer = await asyncio.get_event_loop().run_in_executor(
+            None, 
+            lambda: pt_prompt("Your answer > ")
+        )
+        return answer.strip()
+    except (EOFError, KeyboardInterrupt):
+        return "(no response)"
+
+
 async def generate_session_name(provider, message: str) -> str:
     """Generate a concise session name from user message using LLM."""
     prompt = f"""Generate a short 3-5 word name for this coding session/task:
@@ -263,11 +301,13 @@ class LizCodeCLI:
   /plan         Switch to Plan mode
   /act          Switch to Act mode
   /sh           Switch to Shell mode
+  /aish         Switch to AI Shell mode (commands added to conversation)
 
 [bold cyan]One-shot Commands:[/bold cyan]
   /plan <msg>   Run in Plan mode, return to current
   /act <msg>    Run in Act mode, return to current
   /sh <cmd>     Run shell command
+  /aish <cmd>   Run command, add to AI conversation
 
 [bold cyan]Session Commands:[/bold cyan]
   /new          Create new session
@@ -299,6 +339,7 @@ class LizCodeCLI:
             return
 
         table = Table(title="Tasks", border_style="cyan")
+        table.add_column("ID", style="dim")
         table.add_column("Status", style="bold")
         table.add_column("Task")
 
@@ -313,7 +354,7 @@ class LizCodeCLI:
                 status = "[green][x][/green]"
                 text = f"[dim]{task.content}[/dim]"
 
-            table.add_row(status, text)
+            table.add_row(task.id, status, text)
 
         console.print(table)
         console.print(f"Progress: {self._get_task_progress()}")
@@ -369,9 +410,17 @@ class LizCodeCLI:
             # Restore conversation state if available
             if conv_state:
                 self.state.from_dict(conv_state.get("conversation", {}))
-                if self.agent and "tasks" in conv_state:
-                    from lizcode.core.tasks import TaskList
-                    self.agent.task_list = TaskList.from_dict(conv_state["tasks"])
+                if self.agent:
+                    if "tasks" in conv_state:
+                        from lizcode.core.tasks import TaskList
+                        self.agent.task_list = TaskList.from_dict(conv_state["tasks"])
+                    # Restore plan state
+                    if "plan" in conv_state:
+                        from lizcode.core.plan import Plan
+                        self.agent.current_plan = Plan.from_dict(conv_state["plan"])
+                        console.print(f"[dim]Restored plan: {self.agent.current_plan.title}[/dim]")
+                    else:
+                        self.agent.current_plan = None
         else:
             console.print(f"[red]{message}[/red]")
 
@@ -439,9 +488,15 @@ class LizCodeCLI:
             conv_state = session.load_checkpoint(len(session.checkpoints))
             if conv_state:
                 self.state.from_dict(conv_state.get("conversation", {}))
-                if self.agent and "tasks" in conv_state:
-                    from lizcode.core.tasks import TaskList
-                    self.agent.task_list = TaskList.from_dict(conv_state["tasks"])
+                if self.agent:
+                    if "tasks" in conv_state:
+                        from lizcode.core.tasks import TaskList
+                        self.agent.task_list = TaskList.from_dict(conv_state["tasks"])
+                    # Restore plan state
+                    if "plan" in conv_state:
+                        from lizcode.core.plan import Plan
+                        self.agent.current_plan = Plan.from_dict(conv_state["plan"])
+                        console.print(f"[dim]Restored plan: {self.agent.current_plan.title}[/dim]")
         
         self._first_message = False
         console.print(f"[green]Resumed session: {session.name} ({session.id[:8]})[/green]")
@@ -512,8 +567,27 @@ class LizCodeCLI:
             return True, None
 
         if cmd == "/act":
+            # Check if we have a plan and auto-finalize if needed
+            if self.agent and self.agent.current_plan:
+                from lizcode.core.plan import PlanPhase
+                plan = self.agent.current_plan
+                if plan.phase != PlanPhase.READY_TO_EXECUTE:
+                    console.print(f"[dim]Auto-finalizing plan (was '{plan.phase.value}')...[/dim]")
+                    plan.phase = PlanPhase.READY_TO_EXECUTE
+                    plan._persist()
+                
+                # Auto-populate tasks from plan
+                if plan.steps and not self.agent.task_list.tasks:
+                    self.agent.populate_tasks_from_plan()
+                    console.print(f"[green]Loaded {len(self.agent.task_list.tasks)} tasks from plan.[/green]")
+            
             if rest:
+                # /act Go. or /act <message> - switch mode AND send message
+                self.state.set_mode(Mode.ACT)
+                if self.agent:
+                    self.agent.set_mode(Mode.ACT)
                 return False, ("act", rest)
+            
             self.state.set_mode(Mode.ACT)
             if self.agent:
                 self.agent.set_mode(Mode.ACT)
@@ -524,6 +598,16 @@ class LizCodeCLI:
                 self._run_bash_command(rest)
                 return True, None
             self.state.set_mode(Mode.BASH)
+            return True, None
+
+        if cmd == "/aish":
+            if rest:
+                # One-shot: run command and inject into conversation
+                self._run_aish_command(rest)
+                return True, None
+            # Switch to AISH mode
+            self.state.set_mode(Mode.AISH)
+            console.print("[cyan]Switched to AI Shell mode. Commands will be added to conversation.[/cyan]")
             return True, None
 
         return False, None
@@ -541,6 +625,66 @@ class LizCodeCLI:
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")
 
+    def _run_aish_command(self, command: str) -> None:
+        """Run a bash command and inject result into conversation as a tool call/result.
+        
+        This allows the user to run verification commands and have the AI see the results.
+        """
+        from uuid import uuid4
+        from lizcode.core.state import ToolCall, ToolResult as StateToolResult
+        
+        console.print(f"[dim]$ {command}[/dim]")
+        
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=os.getcwd(),
+                timeout=120,
+            )
+            
+            output = result.stdout
+            if result.stderr:
+                output += f"\n[stderr]\n{result.stderr}"
+            output = output.strip() or "(no output)"
+            success = result.returncode == 0
+            
+        except subprocess.TimeoutExpired:
+            output = f"Command timed out after 120 seconds"
+            success = False
+        except KeyboardInterrupt:
+            output = "Command interrupted"
+            success = False
+            console.print("\n[dim]^C[/dim]")
+        except Exception as e:
+            output = f"Error: {e}"
+            success = False
+        
+        # Display output
+        console.print(output)
+        
+        # Create synthetic tool call and result
+        tool_call_id = str(uuid4())[:8]
+        tool_call = ToolCall(
+            id=tool_call_id,
+            name="bash",
+            arguments={"command": command},
+        )
+        
+        # Add to conversation state
+        self.state.add_assistant_message("", tool_calls=[tool_call])
+        self.state.add_tool_result(StateToolResult(
+            tool_call_id=tool_call_id,
+            name="bash",
+            result=output,
+            success=success,
+        ))
+        
+        style = "green" if success else "red"
+        console.print(f"[{style}]Added to conversation as bash tool result[/{style}]")
+
     def _get_conversation_state(self) -> dict[str, Any]:
         """Get current conversation state for checkpointing."""
         state = {
@@ -549,6 +693,9 @@ class LizCodeCLI:
         }
         if self.agent:
             state["tasks"] = self.agent.task_list.to_dict()
+            # Include plan state so it survives rewind
+            if self.agent.current_plan:
+                state["plan"] = self.agent.current_plan.to_dict()
         return state
 
     async def _process_ai_response(self, user_input: str, temp_mode: Mode | None = None) -> None:
@@ -570,6 +717,7 @@ class LizCodeCLI:
                 provider=provider,
                 state=self.state,
                 approval_callback=self._approval_callback,
+                question_callback=ask_user_callback,
                 working_directory=Path.cwd(),
             )
 
@@ -584,15 +732,26 @@ class LizCodeCLI:
 
         try:
             full_response = []
+            _ever_streamed = False  # Track if we ever streamed anything
 
             async for chunk in self.agent.chat(user_input):
                 chunk_type = chunk.get("type")
 
                 if chunk_type == "content":
                     text = chunk.get("text", "")
-                    full_response.append(text)
+                    # Stream text immediately for better UX
+                    if text.strip():
+                        _ever_streamed = True
+                        console.print(text, end="", markup=False)
+                    else:
+                        # Track non-streamed content for fallback
+                        full_response.append(text)
 
                 elif chunk_type == "tool_call":
+                    # Ensure we're on a new line if streaming was active
+                    if _ever_streamed:
+                        console.print()  # Add newline after streamed content
+                    
                     tool = chunk.get("tool")
                     args = chunk.get("args", {})
                     
@@ -633,7 +792,21 @@ class LizCodeCLI:
 
                     # Skip displaying certain tools - their results are internal
                     if tool in ("todo_write", "read_file", "list_files", "glob", "grep", 
-                                "create_plan", "update_plan", "finalize_plan") and success:
+                                "create_plan", "update_plan", "finalize_plan", "ask_user") and success:
+                        continue
+
+                    # Special handling for attempt_completion - simple one-line output
+                    if tool == "attempt_completion" and success:
+                        # Extract first paragraph as summary
+                        lines = result.split("\n")
+                        summary = ""
+                        for line in lines:
+                            line = line.strip()
+                            if line and not line.startswith("#") and not line.startswith("```"):
+                                summary = line[:100] + ("..." if len(line) > 100 else "")
+                                break
+                        console.print()
+                        console.print(f"[bold green]✅ Task complete:[/bold green] {summary}")
                         continue
 
                     # For task tool, show just the summary, not full reasoning
@@ -683,13 +856,26 @@ class LizCodeCLI:
                     tasks = chunk.get("tasks", "")
                     console.print(f"[dim]{tasks}[/dim]")
 
-            if full_response:
+                elif chunk_type == "iteration_limit":
+                    count = chunk.get("count", 0)
+                    console.print()
+                    console.print(f"[yellow]⚠ Reached {count} iterations in this response.[/yellow]")
+                    continue_exec = Confirm.ask("Continue execution?", default=True)
+                    if not continue_exec:
+                        console.print("[dim]Stopping execution. You can continue with another message.[/dim]")
+                        break
+
+            # Only print final response if we have non-streamed content
+            if full_response and not _ever_streamed:
                 response_text = "".join(full_response)
                 try:
                     md = Markdown(response_text)
                     console.print(md)
                 except Exception:
                     console.print(response_text)
+            elif _ever_streamed:
+                # Newline after streamed content
+                console.print()
 
             # Create checkpoint after successful interaction
             session = self.session_mgr.current_session
@@ -728,6 +914,8 @@ class LizCodeCLI:
             if progress:
                 return f"a {progress} > "
             return "a > "
+        elif mode == Mode.AISH:
+            return "aish > "
         else:
             return "sh > "
 
@@ -767,6 +955,8 @@ class LizCodeCLI:
                 # Handle based on mode
                 if self.state.mode == Mode.BASH:
                     self._run_bash_command(user_input)
+                elif self.state.mode == Mode.AISH:
+                    self._run_aish_command(user_input)
                 else:
                     await self._process_ai_response(user_input)
 

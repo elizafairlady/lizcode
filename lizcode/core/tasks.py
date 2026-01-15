@@ -196,23 +196,24 @@ class TaskList:
         self._persist()
 
     def to_display(self) -> str:
-        """Format tasks for display."""
+        """Format tasks for display with IDs (needed for start/complete actions).
+        
+        Format: [id] [state] content
+        - [id] [ ] content   - pending
+        - [id] [>] content   - in progress (shows active_form)
+        - [id] [x] content   - completed
+        """
         if not self.tasks:
             return "No tasks."
 
         lines = []
         for task in self.tasks:
             if task.state == TaskState.PENDING:
-                marker = "[ ]"
-                text = task.content
+                lines.append(f"[{task.id}] [ ] {task.content}")
             elif task.state == TaskState.IN_PROGRESS:
-                marker = "[>]"
-                text = task.active_form
+                lines.append(f"[{task.id}] [>] {task.active_form}")
             else:
-                marker = "[x]"
-                text = task.content
-
-            lines.append(f"{marker} {text}")
+                lines.append(f"[{task.id}] [x] {task.content}")
 
         return "\n".join(lines)
 

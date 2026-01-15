@@ -3,6 +3,7 @@
 from lizcode.tools.base import Permission, Tool, ToolRegistry, ToolResult
 from lizcode.tools.bash import BashTool
 from lizcode.tools.browser import BrowserTool
+from lizcode.tools.completion import AttemptCompletionTool
 from lizcode.tools.edit_file import EditFileTool
 from lizcode.tools.glob import GlobTool
 from lizcode.tools.grep import GrepTool
@@ -33,6 +34,7 @@ __all__ = [
     "TodoWriteTool",
     "TaskTool",
     "AskUserQuestionTool",
+    "AttemptCompletionTool",
     # Plan tools (Plan mode only)
     "CreatePlanTool",
     "FinalizePlanTool",
@@ -62,6 +64,7 @@ def get_default_tools() -> list[Tool]:
         TodoWriteTool(),
         TaskTool(),
         AskUserQuestionTool(),
+        AttemptCompletionTool(),
         # Plan tools (Plan mode only)
         CreatePlanTool(),
         FinalizePlanTool(),

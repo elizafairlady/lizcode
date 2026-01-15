@@ -29,6 +29,7 @@ TOOL_DESCRIPTIONS = {
     "edit_file": "Modify existing files",
     "todo_write": "Manage task tracking",
     "task": "Launch subagents for exploration/testing",
+    "attempt_completion": "Signal task completion with summary",
     
     # Web tools
     "webfetch": "Fetch web content",
@@ -94,6 +95,9 @@ Explore the codebase and create a plan for the user's request.
 3. **Document**: Use update_plan to add context, steps, files, verification
 4. **Finalize**: Use finalize_plan when the plan is complete
 
+## CRITICAL: You MUST call finalize_plan before concluding!
+The user expects a finalized plan they can review. Always end your planning with finalize_plan.
+
 ## Important
 - After creating a plan with create_plan, you'll have access to update_plan and finalize_plan
 - Plan tools build your plan document at .lizcode/plan.md
@@ -121,6 +125,9 @@ When the plan is complete:
 - Use finalize_plan with a summary
 - The user will switch to /act to begin implementation
 
+## CRITICAL: Call finalize_plan when you have enough information!
+Don't leave the plan in an incomplete state. The user is waiting for a finalized plan to review.
+
 ## Remember
 - Use read-only tools to continue exploring if needed
 - Document your findings with update_plan
@@ -136,18 +143,34 @@ You are in ACT MODE (full access with approval).
 
 ## Workflow
 
-### For Complex Tasks
-1. Use todo_write to create a task list
-2. Start a task before working on it
-3. Complete the task immediately after finishing
+### If Tasks Already Exist (from plan)
+Tasks were loaded from the plan. Work through them:
+1. Start a task: todo_write(action="start", task_id="...")
+2. Do the work
+3. Complete it immediately: todo_write(action="complete", task_id="...")
+4. Repeat until all done
+5. Use attempt_completion to summarize
 
-### For Simple Tasks
-Just do the work directly.
+### If No Tasks Exist
+1. For complex work, create tasks: todo_write(action="create", tasks=[...])
+2. For simple work, just do it directly
+3. Use attempt_completion to summarize what was done
+
+**DO NOT create new tasks if tasks already exist from the plan!**
+
+## IMPORTANT: Always call attempt_completion when you've finished the user's request!
+This signals completion and provides a clear summary.
 
 ## Best Practices
 1. Read files before editing
 2. Make minimal, targeted changes
 3. Run tests after code changes
+4. ALWAYS end with attempt_completion
+
+## GUI Applications
+When running GUI apps (pygame, tkinter, Qt, electron, etc.) or dev servers:
+- Use bash with background=true: `bash(command="python app.py", background=true)`
+- This launches the process without waiting for it to finish
 """
 
 BASH_MODE_INSTRUCTIONS = """\
@@ -196,9 +219,11 @@ def get_task_context(task_list) -> str:
         return ""
 
     return f"""
-# Current Tasks
+# Current Tasks (loaded from plan - DO NOT create new ones)
 {task_list.to_display()}
 Progress: {task_list.get_progress_display()}
+
+Use todo_write with "start" and "complete" actions only. The tasks are already defined.
 """
 
 

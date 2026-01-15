@@ -166,7 +166,9 @@ Use when:
 - Making assumptions that could lead to wasted work
 
 Provide clear, specific questions. Avoid vague questions.
-Include options when applicable to make it easy for user to respond."""
+Include options when applicable to make it easy for user to respond.
+
+This tool will prompt the user interactively and return their response."""
 
     permission = Permission.READ
 
@@ -174,7 +176,10 @@ Include options when applicable to make it easy for user to respond."""
         self._callback = question_callback
 
     def set_callback(self, callback: Any) -> None:
-        """Set the callback for asking questions."""
+        """Set the callback for asking questions.
+        
+        Callback signature: async def callback(question: str, options: list[str] | None, context: str | None) -> str
+        """
         self._callback = callback
 
     @property
@@ -206,8 +211,23 @@ Include options when applicable to make it easy for user to respond."""
         context: str | None = None,
         **kwargs: Any,
     ) -> ToolResult:
-        """Ask the user a question."""
-        # Format the question
+        """Ask the user a question and return their response."""
+        # If callback is set, use it to prompt user interactively
+        if self._callback:
+            try:
+                user_response = await self._callback(question, options, context)
+                return ToolResult(
+                    success=True,
+                    output=f"User response: {user_response}",
+                )
+            except Exception as e:
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error=f"Failed to get user input: {e}",
+                )
+        
+        # Fallback: format question as output (not interactive)
         output_parts = []
 
         if context:
@@ -221,8 +241,10 @@ Include options when applicable to make it easy for user to respond."""
             output_parts.append("Options:")
             for i, opt in enumerate(options, 1):
                 output_parts.append(f"  {i}. {opt}")
+        
+        output_parts.append("")
+        output_parts.append("[No interactive callback - question displayed but no response collected]")
 
-        # This tool's result signals to the CLI that user input is needed
         return ToolResult(
             success=True,
             output="\n".join(output_parts),

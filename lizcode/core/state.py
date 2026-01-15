@@ -10,11 +10,12 @@ from typing import Any
 
 
 class Mode(Enum):
-    """Operating modes for LizCode."""
+    """Operating modes for the assistant."""
 
     PLAN = "plan"
     ACT = "act"
     BASH = "bash"
+    AISH = "aish"  # AI Shell - commands get added to conversation as tool results
 
     def __str__(self) -> str:
         return self.value

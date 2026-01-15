@@ -106,8 +106,8 @@ Only ONE task can be in_progress at any time."""
                     )
 
                 created = self._task_list.add_tasks(tasks)
-                # Show each created task with its ID (AI needs IDs for start/complete)
-                task_lines = [f"[{t.id}] {t.content}" for t in created]
+                # Format: [id] [ ] content (consistent with to_display)
+                task_lines = [f"[{t.id}] [ ] {t.content}" for t in created]
                 return ToolResult(
                     success=True,
                     output="\n".join(task_lines),
@@ -129,10 +129,10 @@ Only ONE task can be in_progress at any time."""
                         error=f"Task not found: {task_id}",
                     )
 
-                # Show the task being started with its ID
+                # Format: [id] [>] active_form (consistent with to_display)
                 return ToolResult(
                     success=True,
-                    output=f"[{task.id}>] {task.active_form}",
+                    output=f"[{task.id}] [>] {task.active_form}",
                 )
 
             elif action == "complete":
@@ -151,11 +151,11 @@ Only ONE task can be in_progress at any time."""
                         error=f"Task not found: {task_id}",
                     )
 
-                # Show completed row with progress
+                # Format: [id] [x] content + progress (consistent with to_display)
                 progress = self._task_list.get_progress_display()
                 return ToolResult(
                     success=True,
-                    output=f"[x] {task.content} {progress}",
+                    output=f"[{task.id}] [x] {task.content} {progress}",
                 )
 
             elif action == "remove":
@@ -166,17 +166,22 @@ Only ONE task can be in_progress at any time."""
                         error="No task_id provided for 'remove' action",
                     )
 
-                removed = self._task_list.remove_task(task_id)
-                if not removed:
+                # Need to get task before removing to show content
+                task = self._task_list.get_task(task_id)
+                if not task:
                     return ToolResult(
                         success=False,
                         output="",
                         error=f"Task not found: {task_id}",
                     )
+                
+                content = task.content
+                self._task_list.remove_task(task_id)
 
+                # Format: [id] [-] content (consistent format)
                 return ToolResult(
                     success=True,
-                    output=f"[-] Removed: {removed.content}",
+                    output=f"[{task_id}] [-] {content}",
                 )
 
             elif action == "list":
