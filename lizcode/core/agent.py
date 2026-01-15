@@ -236,9 +236,37 @@ class Agent:
                 # Continue the loop to get the next response
                 continue
 
-            # No tool calls - we're done
+            # No tool calls in response
             if content:
                 self.state.add_assistant_message(content)
+            
+            # In ACT mode, only stop if attempt_completion was just called
+            # or if there are no remaining tasks
+            if self.state.mode == Mode.ACT:
+                # Check if attempt_completion was called in this turn
+                last_tool_was_completion = False
+                if self.state.messages:
+                    for msg in reversed(self.state.messages):
+                        if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                if tc.name == "attempt_completion":
+                                    last_tool_was_completion = True
+                            break
+                
+                if last_tool_was_completion:
+                    # Agent signaled completion - we're done
+                    break
+                
+                # Check if all tasks are done
+                if self.task_list.tasks:
+                    all_done = all(t.state.value == "completed" for t in self.task_list.tasks)
+                    if all_done:
+                        break
+                
+                # Otherwise keep going - model may just be explaining before next tool call
+                continue
+            
+            # In PLAN mode, text-only response means we're waiting for user
             break
 
     async def _execute_tool(self, tool_call: ToolCall) -> StateToolResult:

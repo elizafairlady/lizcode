@@ -25,7 +25,11 @@ This tool:
 
 ALWAYS call this when done with a task. Don't leave the user hanging."""
 
-    permission = Permission.WRITE  # ACT mode only - signals completion
+    permission = Permission.WRITE  # ACT mode only
+
+    def requires_approval(self, mode: Any) -> bool:
+        """Override to never require approval - this is just a summary."""
+        return False
 
     @property
     def parameters(self) -> dict[str, Any]:
