@@ -113,11 +113,18 @@ class LizCodeCLI:
         # Initialize prompt session with history and multiline support
         history_file = Path.home() / ".lizcode" / "history"
         history_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Create model completer for tab completion
+        from lizcode.tools.model_completer import ModelCompleter
+        model_completer = ModelCompleter(settings)
+        
         self._prompt_session = PromptSession(
             history=FileHistory(str(history_file)),
             multiline=False,  # Single line by default, use Meta+Enter for multiline
             enable_history_search=True,
+            completer=model_completer,
         )
+        self._model_completer = model_completer
 
     def _create_provider(self):
         """Create the model provider based on settings."""
@@ -288,7 +295,7 @@ class LizCodeCLI:
             f"[dim]Provider:[/dim] {self.settings.provider}\n"
             f"[dim]Model:[/dim] {model}\n\n"
             "[dim]Commands: /plan /act /sh /new /sessions /resume[/dim]\n"
-            "[dim]Session: /checkpoints /rewind /tasks /clear /help /exit[/dim]",
+            "[dim]Session: /checkpoints /rewind /tasks /clear /model /help /exit[/dim]",
             title="[bold]Welcome[/bold]",
             border_style="cyan",
         ))
@@ -321,7 +328,7 @@ class LizCodeCLI:
 [bold cyan]Other Commands:[/bold cyan]
   /tasks        Show task list
   /clear        Clear conversation
-  /model        Show model info
+  /model        Show current model or switch with /model <provider/model>
   /help         This help
   /exit         Exit
 
@@ -501,6 +508,61 @@ class LizCodeCLI:
         self._first_message = False
         console.print(f"[green]Resumed session: {session.name} ({session.id[:8]})[/green]")
 
+    def _handle_model_switch(self, model_spec: str) -> tuple[bool, Any]:
+        """Handle model switching: /model <provider/model>."""
+        model_spec = model_spec.strip()
+        
+        if "/" in model_spec:
+            # Full provider/model specification
+            provider, model = model_spec.split("/", 1)
+            provider = provider.lower()
+            
+            if provider not in ["openrouter", "ollama"]:
+                console.print(f"[red]Unknown provider: {provider}. Use 'openrouter' or 'ollama'[/red]")
+                return True, None
+                
+            # Update settings
+            self.settings.provider = provider
+            if provider == "openrouter":
+                self.settings.openrouter_model = f"{provider}/{model}"
+            else:  # ollama
+                self.settings.ollama_model = model
+                
+        else:
+            # Just model name, keep current provider
+            if self.settings.provider == "openrouter":
+                # For OpenRouter, assume the model_spec might be a full model id already
+                if "/" in model_spec:
+                    self.settings.openrouter_model = model_spec
+                else:
+                    # Try to find matching model with provider prefix
+                    self.settings.openrouter_model = model_spec
+            else:  # ollama
+                self.settings.ollama_model = model_spec
+
+        # Persist settings
+        self._save_settings()
+        
+        # Show confirmation
+        current_model = (
+            self.settings.openrouter_model 
+            if self.settings.provider == "openrouter" 
+            else self.settings.ollama_model
+        )
+        console.print(f"[green]Switched to {self.settings.provider}: {current_model}[/green]")
+        
+        # Reset agent so it uses new provider/model on next interaction
+        if self.agent:
+            # We'll let the agent close naturally, just clear the reference
+            # so a new one is created with the updated settings
+            self.agent = None
+            
+        return True, None
+        
+    def _save_settings(self) -> None:
+        """Save current settings to config file."""
+        self.settings.save_to_yaml()
+
     def _handle_command(self, user_input: str) -> tuple[bool, Any]:
         """Handle a slash command. Returns (handled, one_shot_data)."""
         parts = user_input.split(maxsplit=1)
@@ -550,12 +612,17 @@ class LizCodeCLI:
             return True, None
 
         if cmd == "/model":
-            console.print(f"[dim]Provider:[/dim] {self.settings.provider}")
-            if self.settings.provider == "openrouter":
-                console.print(f"[dim]Model:[/dim] {self.settings.openrouter_model}")
+            if rest:
+                # Switch model: /model <provider/model>
+                return self._handle_model_switch(rest)
             else:
-                console.print(f"[dim]Model:[/dim] {self.settings.ollama_model}")
-            return True, None
+                # Show current model info
+                console.print(f"[dim]Provider:[/dim] {self.settings.provider}")
+                if self.settings.provider == "openrouter":
+                    console.print(f"[dim]Model:[/dim] {self.settings.openrouter_model}")
+                else:
+                    console.print(f"[dim]Model:[/dim] {self.settings.ollama_model}")
+                return True, None
 
         # Mode switching
         if cmd == "/plan":
@@ -967,6 +1034,8 @@ class LizCodeCLI:
         # Cleanup
         if self.agent:
             await self.agent.close()
+        if hasattr(self, '_model_completer'):
+            await self._model_completer.close()
 
 
 @click.command()

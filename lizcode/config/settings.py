@@ -85,6 +85,32 @@ class Settings(BaseSettings):
 
         return cls(**yaml_config)
 
+    def save_to_yaml(self, config_path: Path | None = None) -> Path:
+        """Save settings to YAML config file."""
+        config_path = config_path or Path.home() / ".lizcode" / "config.yaml"
+        
+        # Create config dict from current settings
+        config_data = {
+            "provider": self.provider,
+            "openrouter_model": self.openrouter_model,
+            "openrouter_base_url": self.openrouter_base_url,
+            "ollama_host": self.ollama_host,
+            "ollama_model": self.ollama_model,
+            "default_mode": self.default_mode,
+            "streaming": self.streaming,
+        }
+        
+        # Only include API key if it's set
+        if self.openrouter_api_key:
+            config_data["openrouter_api_key"] = self.openrouter_api_key
+            
+        # Write to file
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w") as f:
+            yaml.safe_dump(config_data, f, default_flow_style=False)
+            
+        return config_path
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -171,3 +171,15 @@ class OpenRouterProvider(Provider):
                         yield content
                 except json.JSONDecodeError:
                     continue
+
+    async def list_models(self) -> list[str]:
+        """List available models from OpenRouter."""
+        client = await self._get_client()
+        try:
+            response = await client.get("/models")
+            response.raise_for_status()
+            data = response.json()
+            return [model["id"] for model in data.get("data", [])]
+        except Exception:
+            # Return empty list on error, don't break CLI
+            return []
